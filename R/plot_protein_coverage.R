@@ -11,28 +11,39 @@ utils::globalVariables(c("Last_AA_First",
 
 
 
-.plot_protein_coverage <- function(object, accession, save_plot = FALSE, ...){
+.plot_protein_coverage <- function(object, 
+                                   accession, 
+                                   peptide_fill = "spectral.counts", 
+                                   save_plot = FALSE, 
+                                   ...){
+    
+    # Check that peptide_fill is valid
+    if (!(peptide_fill %in% c(colnames(psms(object)), 
+                              "spectral.counts", "sample.counts"))) {
+        stop(paste("peptide_fill must be 'spectral.counts', 'sample.counts',",
+                   "or a column in psms(object)."))
+    } else {
+        if (peptide_fill == "sample.counts") {
+            if (!("Dataset" %in% colnames(psms(object)))) {
+                stop(paste("If peptide_fill = 'sample.counts', 'Dataset' must",
+                           "be a column in psms(object)."))
+            }
+        }
+    }
     
     x <- psms(object) %>%
+        filter(accession == !!accession) %>%
         select(-c(First_AA, Last_AA)) %>%
         dplyr::rename(Last_AA = Last_AA_First,
                       First_AA = First_AA_First)
     
-    prot_len <- filter(x, accession == !!accession) %>% 
+    prot_len <- x %>% 
         distinct(ProtLen) %>% 
         as.numeric()
     
     prot_name <- accession
     
-    prot <- x %>%
-        filter(accession == !!accession) %>%
-        # dplyr::rename(`First_residue` = `First residue`) %>%
-        # dplyr::rename(`Last_residue` = `Last residue`) %>%
-        group_by(First_AA, Last_AA) %>%
-        tally() %>%
-        ungroup() %>%
-        mutate(Length = Last_AA - First_AA + 1) %>%
-        arrange(First_AA, -Length, -n)
+    prot <- generate_counts(x, type = peptide_fill)
     
     
     # setting staggered ymin
@@ -65,10 +76,13 @@ utils::globalVariables(c("Last_AA_First",
     prot$ymax <- prot$ymin + width_y
     p <-
         ggplot(data = prot) +
-        geom_rect(aes(xmin = 0, xmax = prot_len + 2, ymin = -0.04, ymax = +0.04)) +
-        geom_rect(aes(xmin=First_AA, xmax=Last_AA, ymin=ymin, ymax=ymax, fill=n),
-                  color="white", size=1) +
-        scale_fill_viridis_c(option = "D")
+        geom_rect(aes(xmin = 0, xmax = prot_len + 2, 
+                      ymin = -0.04, ymax = +0.04)) +
+        geom_rect(aes(xmin = First_AA, xmax = Last_AA, 
+                      ymin = ymin, ymax = ymax, 
+                      fill = n),
+                  color = "white", size = 1) +
+            scale_fill_viridis_c(option = "D")
     
     p <- p +    
         ylab(NULL) +
@@ -79,12 +93,13 @@ utils::globalVariables(c("Last_AA_First",
               axis.line.y = element_blank(),
               axis.line.x = element_blank()) +
         scale_x_continuous(breaks = seq(0,prot_len,20)) +
-        theme(axis.text.x = element_text(angle=90),
+        theme(axis.text.x = element_text(angle=90, hjust = 1, vjust = 0.5),
               plot.title = element_text(hjust = 0.5, size=16)) +
         ggtitle(prot_name)
     
-    if(max(prot$ymax) < 0.5)
+    if(max(prot$ymax) < 0.5) {
         p <- p + ylim(-0.04, 0.5)
+    }
     
     if(save_plot){
         file_name <- gsub(", ", "_", prot_name)
@@ -97,5 +112,27 @@ utils::globalVariables(c("Last_AA_First",
 
 
 
-
+## Helper function to generate spectral or sample counts
+generate_counts <- function(x, type) {
+    if (type == "sample.counts") {
+        # Sample counts
+        x <- x %>% 
+            distinct(First_AA, Last_AA, Dataset)
+    } else if (!(type %in% c("sample.counts", "spectral.counts"))) {
+        # Other column in psms(object)
+        x <- x %>%
+            # Forced evaluation doesn't work with distinct()
+            select(First_AA, Last_AA, !!type) %>%
+            distinct()
+    }
+    # This is done regardless of the value of "type".
+    # If type == "spectral.counts", this gets the spectral counts.
+    x <- x  %>%
+        group_by(First_AA, Last_AA) %>%
+        tally() %>% 
+        ungroup() %>%
+        mutate(Length = Last_AA - First_AA + 1)
+    
+    return(x)
+}
 
